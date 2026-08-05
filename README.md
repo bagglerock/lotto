@@ -1,72 +1,96 @@
 # Lotto Lab
 
-Lotto Lab is a local research application for exploring Powerball and Mega Millions number-selection strategies. It downloads official drawing results, generates tickets with transparent algorithms, and measures those algorithms using walk-forward backtesting.
+Lotto Lab is a local dashboard for exploring Powerball and Mega Millions drawing history. It can generate tickets with several transparent strategies—hot, cold, mixed, recent-trend, overdue, combined, and random—and test them against past drawings without using future data.
 
-It does **not** claim that a random lottery can be reliably predicted. Its job is to distinguish interesting-looking patterns from strategies that actually survive unseen historical drawings.
+This is a statistics playground, **not a winning-number predictor**. In a fair drawing, every valid combination has the same chance, and patterns in past results do not change the odds of the next draw.
 
-## What is included
+## Run it
 
-- Current-format Powerball results from October 7, 2015 onward
-- Current-format Mega Millions results from April 8, 2025 onward
-- Official New York State Gaming Commission open-data feeds
-- Pure Random, Bayesian Hot, Bayesian Cold, Hot/Cold Mix, Recent Trend, Overdue, and Combined strategies
-- Seeded, reproducible ticket generation
-- Strict walk-forward backtesting with no future-data leakage
-- Random-baseline comparisons, Brier scores, and bootstrap intervals
-- Immutable, versioned predictions that can be locked before a future drawing
-- A command-line interface and a local Streamlit interface backed by the same engine
-- SQLite storage that remains on the local machine
-
-## Setup
-
-Python 3.11 or newer is required.
+Python 3.11 or newer is required. Python 3.12 is recommended.
 
 ```bash
-python -m venv .venv
+cd lotto
+python3.12 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e '.[dev]'
+
 lotto-lab sync
 lotto-lab ui
 ```
 
-The UI opens locally at `http://localhost:8501`. Streamlit runs on the laptop; it is not necessary to deploy the application to use it.
+Open [http://localhost:8501](http://localhost:8501). Stop the server with `Ctrl+C`.
 
-The NY Open Data SODA 2.1 endpoints work without credentials for light use. A free Socrata app token can optionally be supplied for identified requests:
+On later runs:
 
 ```bash
-export SOCRATA_APP_TOKEN="your-token"
+cd lotto
+source .venv/bin/activate
+lotto-lab sync   # fetch any newer drawings
+lotto-lab ui
 ```
 
-## CLI examples
+The app stores its data locally in SQLite. The official NY Open Data feeds do not require an API key for normal use.
+
+## Current drawing formats
+
+| Game | Results used | Format |
+|---|---|---|
+| Powerball | October 7, 2015 onward | 5 from 1–69 + 1 from 1–26 |
+| Mega Millions | April 8, 2025 onward | 5 from 1–70 + 1 from 1–24 |
+
+Mega Millions has far fewer current-format drawings, so the dashboard marks conclusions from that dataset as lower confidence.
+
+## Troubleshooting
+
+### `requires a different Python`
+
+The virtual environment was created with Python 3.9 or 3.10. Recreate it with Python 3.12:
 
 ```bash
-# Download both games and show local status
-lotto-lab sync
+deactivate 2>/dev/null || true
+rm -rf .venv
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+```
+
+### `command not found: lotto-lab`
+
+The environment is inactive or installation did not finish:
+
+```bash
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+### Browser shows `Connection failed with status 500`
+
+Pull the latest code and reinstall the dependencies:
+
+```bash
+git pull
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+lotto-lab ui
+```
+
+For the older Streamlit/Starlette conflict specifically, this temporary repair also works:
+
+```bash
+python -m pip install 'starlette<1'
+lotto-lab ui
+```
+
+## Optional CLI
+
+```bash
 lotto-lab status
-
-# Generate deterministic tickets
-lotto-lab generate --game powerball --strategy bayesian-hot --tickets 10 --seed 42
-
-# Generate and permanently record a prediction made before a drawing
-lotto-lab generate --game powerball --strategy combined --tickets 10 --seed 42 --lock
-
-# Test one strategy or compare every strategy
-lotto-lab backtest --game powerball --strategy recent-trend --test-from 2023-01-01 --simulations 50
+lotto-lab generate --game powerball --strategy combined --tickets 10 --seed 42
 lotto-lab compare --game powerball --simulations 20
+lotto-lab --help
 ```
-
-Use `lotto-lab --help` or `lotto-lab <command> --help` for every option.
-
-## Current-format isolation
-
-The upstream datasets contain older rule eras. Lotto Lab deliberately filters them at ingestion and validates every draw against the configured current rules:
-
-| Game | Effective date | White balls | Special ball |
-|---|---:|---:|---:|
-| Powerball | 2015-10-07 | 5 from 1–69 | 1 from 1–26 |
-| Mega Millions | 2025-04-08 | 5 from 1–70 | 1 from 1–24 |
-
-Mega Millions has a much younger current-format dataset. The UI displays a persistent low-confidence notice instead of presenting its early frequency differences as strong evidence.
 
 ## Development
 
@@ -75,12 +99,6 @@ pytest
 ruff check .
 ```
 
-More detail is available in:
+Technical details are in [Architecture](docs/ARCHITECTURE.md), [Statistical methods](docs/STATISTICAL_METHODS.md), and [Data sources](docs/DATA_SOURCES.md).
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Statistical methods](docs/STATISTICAL_METHODS.md)
-- [Data sources and validation](docs/DATA_SOURCES.md)
-
-## Responsible use
-
-Every valid combination has the same theoretical jackpot probability in a fair drawing. Backtest results can arise from chance, and simulated performance does not guarantee future performance. Treat lottery spending as entertainment and set a fixed budget independent of anything this application displays.
+Play for entertainment, not as an investment, and use a fixed budget.

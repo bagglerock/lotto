@@ -13,6 +13,7 @@ from lotto_lab.backtest import run_backtest
 from lotto_lab.data import Database, DataSourceError, NyOpenDataClient, sync_game
 from lotto_lab.domain import GAME_RULES, Game
 from lotto_lab.strategies import STRATEGIES, get_strategy, inclusion_probabilities
+from lotto_lab.ui.charts import match_distribution_chart_spec
 
 
 def database_argument() -> str | None:
@@ -241,11 +242,20 @@ with backtest_tab:
         )
         distribution = pd.DataFrame(
             {
-                "White matches": list(result.white_match_distribution),
-                "Tickets": list(result.white_match_distribution.values()),
+                "Number of matches": list(result.white_match_distribution),
+                "Number of tickets": list(result.white_match_distribution.values()),
             }
-        ).set_index("White matches")
-        st.bar_chart(distribution)
+        )
+        st.subheader("White-ball match distribution")
+        st.vega_lite_chart(
+            distribution,
+            match_distribution_chart_spec(),
+            width="stretch",
+        )
+        st.caption(
+            "The vertical axis uses a symmetric logarithmic scale so rare three-, four-, or "
+            "five-match tickets remain visible beside much larger counts. Labels show exact totals."
+        )
 
 with predictions_tab:
     predictions = db.list_predictions(game)
