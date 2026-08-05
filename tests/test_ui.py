@@ -1,8 +1,20 @@
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
+from streamlit.web.server.starlette.starlette_gzip_middleware import (
+    _MediaAwareGZipResponder,
+)
 
 from lotto_lab.data import Database
+
+
+def test_streamlit_gzip_responder_is_compatible_with_starlette() -> None:
+    async def app(scope, receive, send) -> None:
+        return None
+
+    responder = _MediaAwareGZipResponder(app, 500, compresslevel=9)
+
+    assert responder.minimum_size == 500
 
 
 def test_streamlit_app_renders_with_local_data(tmp_path, monkeypatch, powerball_draws) -> None:
