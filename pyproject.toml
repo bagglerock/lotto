@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.0,<3",
   "pandas>=2.2,<3",
+  "starlette>=0.46,<1",
   "streamlit>=1.45,<2",
 ]
 
