@@ -13,6 +13,11 @@ from lotto_lab.backtest import run_backtest
 from lotto_lab.data import Database, DataSourceError, NyOpenDataClient, sync_game
 from lotto_lab.domain import GAME_RULES, Game
 from lotto_lab.strategies import STRATEGIES, get_strategy, inclusion_probabilities
+from lotto_lab.ui.backtest_view import (
+    draw_match_frame,
+    format_backtest_date,
+    top_ticket_frame,
+)
 from lotto_lab.ui.charts import match_distribution_chart_spec
 
 
@@ -167,6 +172,12 @@ with generate_tab:
         st.dataframe(ranking, hide_index=True, use_container_width=True)
 
 with backtest_tab:
+    st.subheader("Walk-forward historical replay")
+    st.info(
+        "This does not test one fixed ticket against old drawings. It freezes history, generates "
+        "new virtual tickets for the next real drawing, reveals that result, scores the tickets, "
+        "and then repeats one drawing at a time."
+    )
     backtest_strategy_slug = st.selectbox(
         "Algorithm to test",
         options=list(STRATEGIES),
@@ -176,24 +187,42 @@ with backtest_tab:
     earliest_index = min(20, len(draws) - 1)
     default_index = min(100, len(draws) - 1)
     test_from = st.date_input(
-        "Pretend today was",
+        "Pretend today was (replay start)",
         value=draws[default_index].draw_date,
         min_value=draws[earliest_index].draw_date,
         max_value=draws[-1].draw_date,
+        help="The first drawing on or after this date becomes the first unseen result to test.",
     )
     training_count = next(
         index for index, draw in enumerate(draws) if draw.draw_date >= test_from
     )
-    st.caption(
-        f"The first prediction will train on {training_count:,} earlier drawings, then the "
-        "model will move forward one drawing at a time."
-    )
     ticket_column, simulation_column = st.columns(2)
-    tickets_per_draw = ticket_column.slider("Tickets per historical draw", 1, 50, 10)
-    simulations = simulation_column.slider("Repeated portfolios", 1, 100, 20)
+    tickets_per_draw = ticket_column.slider(
+        "Tickets per historical draw",
+        1,
+        50,
+        10,
+        help="How many new tickets the algorithm generates in each repeated portfolio.",
+    )
+    simulations = simulation_column.slider(
+        "Repeated portfolios",
+        1,
+        100,
+        20,
+        help="Repeats ticket generation for each target drawing to reduce one lucky seed's effect.",
+    )
+    first_target = draws[training_count]
+    first_training_cutoff = draws[training_count - 1]
+    tickets_per_target = tickets_per_draw * simulations
+    st.success(
+        f"First replay: use {training_count:,} drawings through "
+        f"{first_training_cutoff.draw_date:%b %d, %Y} → generate "
+        f"{tickets_per_target:,} virtual tickets for {first_target.draw_date:%b %d, %Y} → "
+        "compare them with that drawing's actual winning numbers."
+    )
     st.caption(
-        "Each prediction sees only drawings that occurred before its target date. Repeated "
-        "portfolios reduce the influence of one lucky random ticket."
+        f"The replay then advances through {len(draws) - training_count:,} target drawings. "
+        "Each one gets newly generated tickets using only results known before that drawing."
     )
     if st.button("Run walk-forward backtest", type="primary"):
         with st.spinner("Walking forward through history…"):
@@ -206,6 +235,102 @@ with backtest_tab:
                 simulations=simulations,
                 test_from=test_from,
             )
+        st.session_state["backtest_result"] = result
+        st.session_state["backtest_result_game"] = game.value
+        st.session_state["backtest_result_config"] = {
+            "strategy": backtest_strategy_slug,
+            "start": test_from.isoformat(),
+            "tickets_per_draw": tickets_per_draw,
+            "simulations": simulations,
+        }
+        st.session_state[f"backtest_inspect_target_{game.value}"] = (
+            result.draw_results[0].target_date
+        )
+
+    result = st.session_state.get("backtest_result")
+    if st.session_state.get("backtest_result_game") != game.value:
+        result = None
+    if result is not None:
+        current_config = {
+            "strategy": backtest_strategy_slug,
+            "start": test_from.isoformat(),
+            "tickets_per_draw": tickets_per_draw,
+            "simulations": simulations,
+        }
+        if st.session_state.get("backtest_result_config") != current_config:
+            st.warning(
+                "The controls above have changed. The results below are from the last completed "
+                "replay; run the backtest again to apply the new settings."
+            )
+        st.caption(
+            f"Last completed replay: {result.strategy} · {result.tickets_per_draw} tickets × "
+            f"{result.simulations} portfolios per target drawing."
+        )
+        st.divider()
+        st.subheader("Inspect a target drawing")
+        st.caption(
+            "Choose a drawing to see exactly what the algorithm knew, what it generated, and "
+            "how those tickets compared with the real result."
+        )
+        target_options = [draw_result.target_date for draw_result in result.draw_results]
+        inspect_key = f"backtest_inspect_target_{game.value}"
+        if st.session_state.get(inspect_key) not in target_options:
+            st.session_state[inspect_key] = target_options[0]
+        selected_target = st.selectbox(
+            "Target drawing",
+            options=target_options,
+            format_func=format_backtest_date,
+            key=inspect_key,
+        )
+        selected_draw = next(
+            draw_result
+            for draw_result in result.draw_results
+            if draw_result.target_date == selected_target
+        )
+        actual_white = "  ".join(f"{number:02d}" for number in selected_draw.actual_white)
+        st.markdown(f"#### Actual result — {format_backtest_date(selected_draw.target_date)}")
+        st.markdown(f"### {actual_white}  ·  Special {selected_draw.actual_special:02d}")
+        st.caption(
+            f"Every ticket below was generated from {selected_draw.training_draws:,} drawings "
+            f"available through {format_backtest_date(selected_draw.training_cutoff)}."
+        )
+        detail_columns = st.columns(4)
+        detail_columns[0].metric(
+            "Training cutoff", format_backtest_date(selected_draw.training_cutoff)
+        )
+        detail_columns[1].metric("Tickets tested", f"{selected_draw.tickets_evaluated:,}")
+        detail_columns[2].metric(
+            "Best white match", f"{selected_draw.best_white_matches} of {rules.white_count}"
+        )
+        detail_columns[3].metric(
+            "Special-ball hits", f"{selected_draw.special_matches:,}"
+        )
+        count_column, ticket_result_column = st.columns([1, 2])
+        with count_column:
+            st.markdown("**All tickets for this drawing**")
+            st.dataframe(
+                draw_match_frame(selected_draw),
+                hide_index=True,
+                use_container_width=True,
+            )
+        with ticket_result_column:
+            st.markdown("**Best generated tickets**")
+            st.dataframe(
+                top_ticket_frame(selected_draw),
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.caption(
+                f"Showing the best {len(selected_draw.top_tickets):,} of "
+                f"{selected_draw.tickets_evaluated:,} tickets. The table at left counts them all."
+            )
+
+        st.divider()
+        st.subheader("Overall results across the full replay")
+        st.caption(
+            f"Combined results from {format_backtest_date(result.draw_results[0].target_date)} "
+            f"through {format_backtest_date(result.draw_results[-1].target_date)}."
+        )
         metric_columns = st.columns(4)
         metric_columns[0].metric("Draws tested", f"{result.draws_tested:,}")
         metric_columns[1].metric("Virtual tickets", f"{result.tickets_evaluated:,}")
@@ -226,20 +351,25 @@ with backtest_tab:
                 "The interval excludes zero in this backtest. This is interesting, but still needs "
                 "locked forward testing before it should be treated as repeatable."
             )
-        st.dataframe(
-            pd.DataFrame(
-                {
-                    "Metric": ["White Brier score", "Special Brier score"],
-                    "Algorithm": [result.white_brier_score, result.special_brier_score],
-                    "Random baseline": [
-                        result.random_white_brier_score,
-                        result.random_special_brier_score,
-                    ],
-                }
-            ),
-            hide_index=True,
-            use_container_width=True,
-        )
+        with st.expander("Advanced probability scoring"):
+            st.caption(
+                "Lower Brier scores are better. Compare the algorithm with the random baseline; "
+                "small differences can still be ordinary noise."
+            )
+            st.dataframe(
+                pd.DataFrame(
+                    {
+                        "Metric": ["White Brier score", "Special Brier score"],
+                        "Algorithm": [result.white_brier_score, result.special_brier_score],
+                        "Random baseline": [
+                            result.random_white_brier_score,
+                            result.random_special_brier_score,
+                        ],
+                    }
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
         distribution = pd.DataFrame(
             {
                 "Number of matches": list(result.white_match_distribution),

@@ -8,6 +8,31 @@ import numpy as np
 from lotto_lab.domain import Draw, GameRules
 from lotto_lab.strategies import Strategy, inclusion_probabilities, normalize
 
+RECORDED_TICKETS_PER_DRAW = 10
+
+
+@dataclass(frozen=True, slots=True)
+class TicketOutcome:
+    white: tuple[int, ...]
+    special: int
+    white_matches: int
+    special_match: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DrawBacktestResult:
+    target_date: str
+    training_cutoff: str
+    training_draws: int
+    actual_white: tuple[int, ...]
+    actual_special: int
+    tickets_evaluated: int
+    white_match_distribution: dict[int, int]
+    special_matches: int
+    best_white_matches: int
+    jackpot_hits: int
+    top_tickets: tuple[TicketOutcome, ...]
+
 
 @dataclass(frozen=True, slots=True)
 class BacktestResult:
@@ -32,6 +57,7 @@ class BacktestResult:
     white_match_distribution: dict[int, int]
     jackpot_hits: int
     white_lift_ci_95: tuple[float, float]
+    draw_results: tuple[DrawBacktestResult, ...]
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -80,6 +106,7 @@ def run_backtest(
     special_brier_sum = 0.0
     top_hits = 0
     per_draw_white_matches: list[float] = []
+    draw_results: list[DrawBacktestResult] = []
 
     for index in range(start_index, len(draws)):
         history = draws[:index]
@@ -101,14 +128,49 @@ def run_backtest(
         draw_match_total = 0
         ticket_count = tickets_per_draw * simulations
         tickets = strategy.generate_from_scores(scores, rules, ticket_count, rng)
+        draw_distribution = {matches: 0 for matches in range(rules.white_count + 1)}
+        draw_special_matches = 0
+        draw_jackpot_hits = 0
+        ticket_outcomes: list[TicketOutcome] = []
         for ticket in tickets:
             white_matches = len(set(ticket.white) & set(actual.white))
-            special_match = int(ticket.special == actual.special)
+            special_match = ticket.special == actual.special
             distribution[white_matches] += 1
+            draw_distribution[white_matches] += 1
             total_white_matches += white_matches
             draw_match_total += white_matches
-            total_special_matches += special_match
-            jackpot_hits += int(white_matches == rules.white_count and special_match == 1)
+            total_special_matches += int(special_match)
+            draw_special_matches += int(special_match)
+            is_jackpot = white_matches == rules.white_count and special_match
+            jackpot_hits += int(is_jackpot)
+            draw_jackpot_hits += int(is_jackpot)
+            ticket_outcomes.append(
+                TicketOutcome(
+                    white=ticket.white,
+                    special=ticket.special,
+                    white_matches=white_matches,
+                    special_match=special_match,
+                )
+            )
+        ticket_outcomes.sort(
+            key=lambda outcome: (outcome.white_matches, outcome.special_match),
+            reverse=True,
+        )
+        draw_results.append(
+            DrawBacktestResult(
+                target_date=actual.draw_date.isoformat(),
+                training_cutoff=history[-1].draw_date.isoformat(),
+                training_draws=len(history),
+                actual_white=actual.white,
+                actual_special=actual.special,
+                tickets_evaluated=ticket_count,
+                white_match_distribution=draw_distribution,
+                special_matches=draw_special_matches,
+                best_white_matches=ticket_outcomes[0].white_matches,
+                jackpot_hits=draw_jackpot_hits,
+                top_tickets=tuple(ticket_outcomes[:RECORDED_TICKETS_PER_DRAW]),
+            )
+        )
         per_draw_white_matches.append(draw_match_total / ticket_count)
 
     draws_tested = len(draws) - start_index
@@ -160,4 +222,5 @@ def run_backtest(
         white_match_distribution=distribution,
         jackpot_hits=jackpot_hits,
         white_lift_ci_95=(float(lower), float(upper)),
+        draw_results=tuple(draw_results),
     )

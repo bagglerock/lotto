@@ -38,3 +38,31 @@ def test_streamlit_app_renders_with_local_data(tmp_path, monkeypatch, powerball_
     assert not app.exception
     assert app.title[0].value == "Lotto Lab"
     assert app.radio[0].value == "Powerball"
+
+
+def test_backtest_ui_explains_and_inspects_target_drawings(
+    tmp_path, monkeypatch, powerball_draws
+) -> None:
+    monkeypatch.setenv("LOTTO_LAB_DATA_DIR", str(tmp_path))
+    database = Database(tmp_path / "lotto.db")
+    database.upsert_draws(powerball_draws)
+    app_path = Path(__file__).parents[1] / "src" / "lotto_lab" / "ui" / "app.py"
+    app = AppTest.from_file(str(app_path), default_timeout=10).run()
+
+    run_button = next(
+        button for button in app.button if button.label == "Run walk-forward backtest"
+    )
+    app = run_button.click().run(timeout=10)
+
+    assert not app.exception
+    assert any(
+        "does not test one fixed ticket" in message.value for message in app.info
+    )
+    assert any(
+        heading.value == "Inspect a target drawing" for heading in app.subheader
+    )
+    assert any(selectbox.label == "Target drawing" for selectbox in app.selectbox)
+    assert any(metric.label == "Training cutoff" for metric in app.metric)
+    assert any(
+        "Actual result" in markdown.value for markdown in app.markdown
+    )
